@@ -1,5 +1,12 @@
 def sonarStatus = 'NOT CHECKED'  // ✅ Declare at global level
 
+def COLOR_MAP = [
+    'SUCCESS': '#36a64f',   // green
+    'FAILURE': '#FF0000',   // red
+    'UNSTABLE': '#FFFF00',  // yellow
+    'ABORTED': '#D3D3D3'    // gray
+]
+
 pipeline {
     agent any
 
