@@ -2,7 +2,6 @@ def COLOR_MAP = [
     'SUCCESS': 'good', 
     'FAILURE': 'danger',
 ]
-
 pipeline {
     agent any
     tools {
@@ -102,8 +101,9 @@ pipeline {
             echo 'Slack Notifications.'
             slackSend channel: '#jenkinscicd',
                 color: COLOR_MAP[currentBuild.currentResult],
-            message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER}\n" +
-                     "*SonarQube Quality Gate:* ${sonarStatus}\n" +
-                     "More info at: ${env.BUILD_URL}"        }
+                message: "*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build ${env.BUILD_NUMBER}\n" +
+                    "*SonarQube Quality Gate:* ${sonarStatus}\n" +
+                    "More info at: ${env.BUILD_URL}"
+        }
     }
 }
