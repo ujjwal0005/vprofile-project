@@ -37,6 +37,8 @@ pipeline {
                     timeout(time: 1, unit: 'HOURS') {
                         def qualityGate = waitForQualityGate(abortPipeline: true)
                         sonarStatus = qualityGate.status  // ✅ Modify global variable
+                        echo "SonarQube Quality Gate status: ${sonarStatus}"
+
                     }
                 }
             }
