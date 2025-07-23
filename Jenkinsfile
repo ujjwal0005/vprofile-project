@@ -117,6 +117,7 @@ pipeline {
 • *Coverage*: ${coverage}%
 • *Duplications*: ${duplications}%
 """
+message: sonarSummary
         }
     }
 }
