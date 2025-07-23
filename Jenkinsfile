@@ -106,7 +106,7 @@ pipeline {
 
                         // Send to #codeanalysis channel
                         slackSend(
-                            channel: '#codeanalysis',
+                            channel: '#jenkinscicd',
                             color: resultColor,
                             message: analysisResult
                         )
