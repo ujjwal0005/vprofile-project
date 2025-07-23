@@ -1,13 +1,12 @@
 def COLOR_MAP = [
-    'SUCCESS': 'good',
-    'FAILURE': 'danger'
+    'SUCCESS': 'good', 
+    'FAILURE': 'danger',
 ]
-
 pipeline {
     agent any
     tools {
-        maven 'MAVEN'
-        jdk 'JDK17'
+        maven "MAVEN"
+        jdk "JDK17"
     }
     
     environment {
@@ -31,16 +30,17 @@ pipeline {
             }
             post {
                 success {
-                    echo "Now archiving"
+                    echo "Now Archiving."
                     archiveArtifacts artifacts: '**/*.war'
                 }
             }
         }
 
-        stage('Test') {
+        stage('Test'){
             steps {
                 sh 'mvn -s settings.xml test'
             }
+
         }
 
         stage('Checkstyle Analysis'){
@@ -67,22 +67,24 @@ pipeline {
             }
         }
 
-        stage("Quality Gate"){
+        stage("Quality Gate") {
             steps {
-                timeout (time: 1, unit: 'HOURS'){
+                timeout(time: 1, unit: 'HOURS') {
+                    // Parameter indicates whether to set pipeline to UNSTABLE if Quality Gate fails
+                    // true = set pipeline to UNSTABLE, false = don't
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-         stage("UploadArtifact"){
+        stage("UploadArtifact"){
             steps{
                 nexusArtifactUploader(
                   nexusVersion: 'nexus3',
                   protocol: 'http',
                   nexusUrl: "${NEXUSIP}:${NEXUSPORT}",
                   groupId: 'QA',
-                  version: "${env.BUILD_ID}.${env.BUILD_TAG}",
+                  version: "${env.BUILD_ID}-${env.BUILD_TIMESTAMP}",
                   repository: "${RELEASE_REPO}",
                   credentialsId: "${NEXUS_LOGIN}",
                   artifacts: [
