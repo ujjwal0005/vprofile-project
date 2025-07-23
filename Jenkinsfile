@@ -1,7 +1,6 @@
 def COLOR_MAP = [
     'SUCCESS': 'good',
-    'FAILURE': 'danger',
-    'UNSTABLE': 'warning'
+    'FAILURE': 'danger'
 ]
 
 pipeline {
@@ -13,20 +12,14 @@ pipeline {
     }
 
     environment {
-        SNAP_REPO = 'vprofile-snapshot'
-        NEXUS_USER = 'admin'
-        NEXUS_PASS = 'admin123'
-        RELEASE_REPO = 'vprofile-release'
-        CENTRAL_REPO = 'vpro-maven-central'
+        SONAR_HOST_URL = 'http://192.168.1.105:9000'  // ✅ Use actual IP/host of SonarQube
+        SONAR_PROJECT_KEY = 'vprofile'
+        SONARSERVER = 'sonarserver'                 // From Jenkins tool config
+        SONARSCANNER = 'sonarscanner'               // From Jenkins tool config
         NEXUSIP = '192.168.1.102'
         NEXUSPORT = '8081'
-        NEXUS_GRP_REPO = 'vpro-maven-group'
+        RELEASE_REPO = 'vprofile-release'
         NEXUS_LOGIN = 'nexuslogin'
-        SONARSERVER = 'sonarserver'
-        SONARSCANNER = 'sonarscanner'
-        SONAR_TOKEN = credentials('sonartoken')
-        SONAR_PROJECT_KEY = 'vprofile'
-        SONAR_HOST_URL = 'http://sonarurl'
     }
 
     stages {
@@ -60,124 +53,117 @@ pipeline {
             }
             steps {
                 withSonarQubeEnv("${SONARSERVER}") {
-                    sh '''${scannerHome}/bin/sonar-scanner \
-                    -Dsonar.projectKey=vprofile \
-                    -Dsonar.projectName=vprofile \
-                    -Dsonar.projectVersion=1.0 \
-                    -Dsonar.sources=src/ \
-                    -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
-                    -Dsonar.junit.reportsPath=target/surefire-reports/ \
-                    -Dsonar.jacoco.reportsPath=target/jacoco.exec \
-                    -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml'''
+                    sh '''
+                        ${scannerHome}/bin/sonar-scanner \
+                          -Dsonar.projectKey=vprofile \
+                          -Dsonar.projectName=vprofile \
+                          -Dsonar.projectVersion=1.0 \
+                          -Dsonar.sources=src/ \
+                          -Dsonar.java.binaries=target/test-classes/com/visualpathit/account/controllerTest/ \
+                          -Dsonar.junit.reportsPath=target/surefire-reports/ \
+                          -Dsonar.jacoco.reportsPath=target/jacoco.exec \
+                          -Dsonar.java.checkstyle.reportPaths=target/checkstyle-result.xml
+                    '''
                 }
             }
         }
 
-        stage('Quality Gate') {
+        stage("Quality Gate") {
             steps {
-                timeout(time: 1, unit: 'HOURS') {
+                timeout(time: 2, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
             }
         }
 
-        stage('Upload Artifact') {
+        stage('Fetch SonarQube Metrics') {
             steps {
-                nexusArtifactUploader(
-                    nexusVersion: 'nexus3',
-                    protocol: 'http',
-                    nexusUrl: "${NEXUSIP}:${NEXUSPORT}",
-                    groupId: 'QA',
-                    version: "${env.BUILD_ID}.${env.BUILD_TAG}",
-                    repository: "${RELEASE_REPO}",
-                    credentialsId: "${NEXUS_LOGIN}",
-                    artifacts: [
-                        [artifactId: 'vproapp',
-                         classifier: '',
-                         file: 'target/vprofile-v2.war',
-                         type: 'war']
-                    ]
-                )
+                withCredentials([string(credentialsId: 'SONAR_TOKEN', variable: 'SONAR_TOKEN')]) {
+                    script {
+                        def sonarHost = "${SONAR_HOST_URL}"
+                        def projectKey = "${SONAR_PROJECT_KEY}"
+
+                        def getJson = { url ->
+                            def response = sh(script: "curl -fsS -u $SONAR_TOKEN: '${url}'", returnStdout: true).trim()
+                            return readJSON text: response
+                        }
+
+                        // Get Analysis ID
+                        def analysisJson = getJson("${sonarHost}/api/project_analyses/search?project=${projectKey}")
+                        def analysisId = analysisJson.analyses[0]?.key
+
+                        if (!analysisId) {
+                            error '❌ Failed to fetch analysis ID from SonarQube'
+                        }
+
+                        // Get Quality Gate Status
+                        def qgStatusJson = getJson("${sonarHost}/api/qualitygates/project_status?analysisId=${analysisId}")
+                        def qualityStatus = qgStatusJson.projectStatus.status
+
+                        // Get Measures
+                        def measuresJson = getJson("${sonarHost}/api/measures/component?component=${projectKey}&metricKeys=security_rating,reliability_rating,sqale_rating,bugs,vulnerabilities,code_smells,security_hotspots,coverage,duplicated_lines_density,ncloc")
+                        def measures = measuresJson.component.measures
+
+                        def get = { key -> measures.find { it.metric == key }?.value ?: 'N/A' }
+
+                        // Prepare Slack message
+                        env.SONAR_METRICS_MESSAGE = """
+*SonarQube Report for ${projectKey}:*
+✅ Quality Gate: *${qualityStatus}*
+📦 Bugs: *${get('bugs')}*
+🛡 Vulnerabilities: *${get('vulnerabilities')}*
+🧹 Code Smells: *${get('code_smells')}*
+🔥 Hotspots: *${get('security_hotspots')}*
+🔐 Security Rating: *${get('security_rating')}*
+🔧 Maintainability Rating: *${get('sqale_rating')}*
+🐞 Reliability Rating: *${get('reliability_rating')}*
+🧪 Coverage: *${get('coverage')}%*
+🔁 Duplications: *${get('duplicated_lines_density')}%*
+📄 Lines of Code: *${get('ncloc')}*
+                        """.stripIndent().trim()
+
+                        if (qualityStatus != "OK") {
+                            error "❌ Quality Gate failed"
+                        }
+                    }
+                }
             }
         }
 
-        stage('SonarQube Summary to Slack') {
+        stage("Upload Artifact") {
             steps {
-                script {
-                    def shTrimmed = { cmd -> sh(script: cmd, returnStdout: true).trim() }
-
-                    def analysisId = ''
-                    for (int i = 0; i < 10; i++) {
-                        analysisId = shTrimmed("""
-                          curl -fsS -u ${SONAR_TOKEN}: \
-                            '${SONAR_HOST_URL}/api/project_analyses/search?project=${SONAR_PROJECT_KEY}' \
-                            | jq -r '.analyses[0].key'
-                        """)
-                        if (analysisId && analysisId != 'null') {
-                            echo "✅ Found analysis ID: ${analysisId}"
-                            break
-                        } else {
-                            echo "⏳ Attempt ${i+1}: Analysis ID not found. Retrying in 10s..."
-                            sleep 10
-                        }
-                    }
-                    if (!analysisId || analysisId == 'null') {
-                        error '❌ Could not find Analysis ID after retries!'
-                    }
-
-                    def statusJson = shTrimmed("""
-                      curl -fsS -u ${SONAR_TOKEN}: \
-                        '${SONAR_HOST_URL}/api/qualitygates/project_status?analysisId=${analysisId}'
-                    """)
-                    def statusObj = readJSON text: statusJson
-                    def qualityGateStatus = statusObj.projectStatus.status
-
-                    def measuresJson = shTrimmed("""
-                      curl -fsS -u ${SONAR_TOKEN}: \
-                        '${SONAR_HOST_URL}/api/measures/component?component=${SONAR_PROJECT_KEY}&metricKeys=security_rating,reliability_rating,sqale_rating,bugs,vulnerabilities,code_smells,coverage,duplicated_lines_density,ncloc'
-                    """)
-                    def measures = readJSON text: measuresJson
-
-                    def getMetricValue = { key ->
-                        def metric = measures.component.measures.find { it.metric == key }
-                        return metric ? metric.value : 'N/A'
-                    }
-
-                    def metrics = [
-                        "🔐 Security Rating: ${getMetricValue('security_rating')}",
-                        "🐛 Reliability Rating: ${getMetricValue('reliability_rating')}",
-                        "🛠️ Maintainability: ${getMetricValue('sqale_rating')}",
-                        "🧪 Bugs: ${getMetricValue('bugs')}",
-                        "🚨 Vulnerabilities: ${getMetricValue('vulnerabilities')}",
-                        "📦 Code Smells: ${getMetricValue('code_smells')}",
-                        "📊 Coverage: ${getMetricValue('coverage')}%",
-                        "🔁 Duplications: ${getMetricValue('duplicated_lines_density')}%",
-                        "📏 LOC: ${getMetricValue('ncloc')}"
-                    ].join('\n')
-
-                    slackSend(
-                        channel: '#jenkinscicd',
-                        color: COLOR_MAP[currentBuild.currentResult],
-                        message: """
-*${currentBuild.currentResult}:* Job ${env.JOB_NAME} build #${env.BUILD_NUMBER}
-📌 Quality Gate: *${qualityGateStatus}*
-${metrics}
-🔗 <${env.BUILD_URL}|Open Build>
-"""
-                    )
-                }
+                nexusArtifactUploader(
+                  nexusVersion: 'nexus3',
+                  protocol: 'http',
+                  nexusUrl: "${NEXUSIP}:${NEXUSPORT}",
+                  groupId: 'QA',
+                  version: "${env.BUILD_ID}.${env.BUILD_TAG}",
+                  repository: "${RELEASE_REPO}",
+                  credentialsId: "${NEXUS_LOGIN}",
+                  artifacts: [[
+                      artifactId: 'vproapp',
+                      classifier: '',
+                      file: 'target/vprofile-v2.war',
+                      type: 'war'
+                  ]]
+                )
             }
         }
     }
 
     post {
-        failure {
-            slackSend channel: '#jenkinscicd',
-                color: 'danger',
-                message: "*FAILURE:* Job ${env.JOB_NAME} build #${env.BUILD_NUMBER} failed.\nMore info: ${env.BUILD_URL}"
-        }
-        success {
-            echo "✅ Pipeline completed successfully!"
+        always {
+            script {
+                slackSend channel: '#jenkinscicd',
+                    color: COLOR_MAP[currentBuild.currentResult],
+                    tokenCredentialId: 'slacktoken',
+                    message: """
+*${currentBuild.currentResult}:* Job *${env.JOB_NAME}* Build *#${env.BUILD_NUMBER}*
+🔗 <${env.BUILD_URL}|View Console Output>
+
+${env.SONAR_METRICS_MESSAGE ?: '_No SonarQube data found._'}
+                    """.stripIndent().trim()
+            }
         }
     }
 }
