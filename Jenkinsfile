@@ -24,7 +24,7 @@ pipeline {
         NEXUS_LOGIN = 'nexuslogin'
         SONARSERVER = 'sonarserver'
         SONARSCANNER = 'sonarscanner'
-        SONAR_TOKEN = credentials('SONAR_TOKEN')
+        SONAR_TOKEN = credentials('sonartoken')
         SONAR_PROJECT_KEY = 'vprofile'
         SONAR_HOST_URL = 'http://sonarurl'
     }
